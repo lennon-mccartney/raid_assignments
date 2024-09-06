@@ -1,5 +1,6 @@
+from __future__ import annotations
 import os.path
-from collections.abc import generator
+from collections.abc import Generator
 from enum import Enum
 
 from google.auth.transport.requests import Request
@@ -10,7 +11,7 @@ from googleapiclient.errors import HttpError
 from pydantic import BaseModel
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 # The ID and range of a sample spreadsheet.
 SHEET_ID = "1YV8zgVa-QC0t5eEAKqoL-5u21uJkDsSOd2RC_b_KY6Y"
@@ -32,36 +33,56 @@ class Raider(BaseModel):
     wow_class: str
     spec: str
     role: str
+    color: str
     position_set: bool = False
 
 
-class Assignment(list):
-    def __eq__(self, other: 'Assignment'|int):
+class Assignment(list[Raider]):
+    def __eq__(self, other: Assignment | int):
         if isinstance(other, int):
             return len(self) == other
         return len(self) == len(other)
 
-    def __gt__(self, other: 'Assignment'|int):
+    def __gt__(self, other: Assignment | int):
         if isinstance(other, int):
             return len(self) > other
         return len(self) > len(other)
 
-    def __lt__(self, other: 'Assignment'|int):
+    def __lt__(self, other: Assignment | int):
         if isinstance(other, int):
             return len(self) < other
         return len(self) < len(other)
 
+    def __ge__(self, other: Assignment | int):
+        if isinstance(other, int):
+            return len(self) >= other
+        return len(self) >= len(other)
 
-class AlAkir:
+    def __le__(self, other: Assignment | int):
+        if isinstance(other, int):
+            return len(self) <= other
+        return len(self) <= len(other)
+
+    def has_healer(self) -> bool:
+        for raider in self:
+            if raider.role == Role.HEALER.value:
+                return True
+        return False
+
+class AlAkir(BaseModel):
     roster: 'RaidRoster'
-    skull: Assignment[Raider] = Assignment()
-    cross: Assignment[Raider] = Assignment()
-    square: Assignment[Raider] = Assignment()
-    moon: Assignment[Raider] = Assignment()
-    triangle: Assignment[Raider] = Assignment()
-    star: Assignment[Raider] = Assignment()
-    diamond: Assignment[Raider] = Assignment()
-    circle: Assignment[Raider] = Assignment()
+    skull: Assignment = Assignment()
+    cross: Assignment = Assignment()
+    square: Assignment = Assignment()
+    moon: Assignment = Assignment()
+    triangle: Assignment = Assignment()
+    star: Assignment = Assignment()
+    diamond: Assignment = Assignment()
+    circle: Assignment = Assignment()
+    _cells: list[list[str]] | None = None
+
+    class Config:
+        arbitrary_types_allowed = True
 
     def add_to_position(self, position: str|Assignment, raider: str|Raider) -> None:
         if isinstance(raider, str):
@@ -78,18 +99,41 @@ class AlAkir:
     def get_assignments(self):
         for raider in self.roster:
             raider.position_set = False
-        raw_assignments = get_range(SHEET_ID, 'TotFW Assigns!Q70:AR84')
+        self._cells = get_range(SHEET_ID, 'TotFW Assigns!Q70:AR84')
         for i in range(1, 7):
-            self.add_to_position('skull', raw_assignments[i][1])
-            self.add_to_position('star', raw_assignments[i][8])
-            self.add_to_position('diamond', raw_assignments[i][15])
-            self.add_to_position('cross', raw_assignments[i][22])
+            self.add_to_position('skull', self._cells[i][1])
+            self.add_to_position('star', self._cells[i][8])
+            self.add_to_position('diamond', self._cells[i][15])
+            self.add_to_position('cross', self._cells[i][22])
 
-        for i in range(10, 16):
-            self.add_to_position('triangle', raw_assignments[i][1])
-            self.add_to_position('square', raw_assignments[i][8])
-            self.add_to_position('moon', raw_assignments[i][15])
-            self.add_to_position('circle', raw_assignments[i][22])
+        for i in range(9, 15):
+            self.add_to_position('triangle', self._cells[i][1])
+            self.add_to_position('square', self._cells[i][8])
+            self.add_to_position('moon', self._cells[i][15])
+            self.add_to_position('circle', self._cells[i][22])
+
+    def assignment_to_cells(self, assignment: Assignment, index: int, start: int) -> None:
+        i = 0
+        for raider in assignment:
+            self._cells[start][index] = raider.name
+            i += 1
+            start += 1
+        while i < 6:
+            self._cells[start][index] = ''
+            i += 1
+
+    def write(self):
+        if not getattr(self, '_cells', None):
+            self._cells = get_range(SHEET_ID, 'TotFW Assigns!Q70:AR84')
+        self.assignment_to_cells(self.skull, 1, 1)
+        self.assignment_to_cells(self.star, 8, 1)
+        self.assignment_to_cells(self.diamond, 15, 1)
+        self.assignment_to_cells(self.cross, 22, 1)
+        self.assignment_to_cells(self.triangle, 1, 9)
+        self.assignment_to_cells(self.square, 8, 9)
+        self.assignment_to_cells(self.moon, 15, 9)
+        self.assignment_to_cells(self.circle, 22, 9)
+        write_range(SHEET_ID, 'TotFW Assigns!Q70:AR84', self._cells)
 
     def reset_assignments(self) -> None:
         self.skull = Assignment()
@@ -103,7 +147,8 @@ class AlAkir:
         for raider in self.roster:
             raider.position_set = False
 
-    def _this_weird_fucking_tier_system(self, tiers: list[Assignment]):
+    @staticmethod
+    def _this_weird_fucking_tier_system(tiers: list[Assignment]) -> Assignment | None:
         assert len(tiers) == 5
         one, two, three, four, five = tiers
         if one < 3 and one <= two and one <= three:
@@ -126,24 +171,29 @@ class AlAkir:
             return four
         elif five < 4:
             return five
-        return self.get_any_spot()
+        return None
 
     def get_next_available_melee_spot(self) -> Assignment:
-        return self._this_weird_fucking_tier_system([self.triangle, self.diamond, self.cross, self.star, self.square])
+        spot = self._this_weird_fucking_tier_system([self.triangle, self.diamond, self.cross, self.star, self.square])
+        if spot is not None:
+            return spot
+        return self.get_next_available_ranged_spot()
 
     def get_next_available_ranged_spot(self) -> Assignment:
-        return self._this_weird_fucking_tier_system([self.skull, self.moon, self.circle, self.square, self.star])
+        spot = self._this_weird_fucking_tier_system([self.skull, self.moon, self.circle, self.square, self.star])
+        if spot is not None:
+            return spot
+        return self.get_next_available_melee_spot()
 
-    def get_next_healer_spot(self) -> generator[Assignment]:
-        if self.skull < 3: yield self.skull
-        if self.diamond < 3: yield self.diamond
-        if self.moon < 3: yield self.moon
-        if self.triangle < 3: yield self.triangle
-        if self.star < 3: yield self.star
-        if self.square < 3: yield self.square
-        if self.circle < 3: yield self.circle
-        if self.cross < 3: yield self.cross
-        raise StopIteration()
+    def get_next_healer_spot(self) -> Assignment:
+        if self.skull < 3 and not self.skull.has_healer(): return self.skull
+        if self.diamond < 3 and not self.diamond.has_healer(): return self.diamond
+        if self.moon < 3 and not self.moon.has_healer(): return self.moon
+        if self.triangle < 3 and not self.triangle.has_healer(): return self.triangle
+        if self.star < 3 and not self.star.has_healer(): return self.star
+        if self.square < 3 and not self.square.has_healer(): return self.square
+        if self.circle < 3 and not self.circle.has_healer(): return self.circle
+        if self.cross < 3 and not self.cross.has_healer(): return self.cross
 
     def get_any_spot(self) -> Assignment:
         # TODO: This
@@ -151,17 +201,43 @@ class AlAkir:
 
     def fully_optimize(self) -> None:
         self.reset_assignments()
-        self.add_to_position('circle', self.roster.get_main_tank())
+        self.optimize()
+
+    def optimize(self) -> None:
+        main_tank = self.roster.get_main_tank()
+        if not main_tank.position_set:
+            self.add_to_position('circle', self.roster.get_main_tank())
         for shaman in self.roster.get_enhancement_shamans():
-            self.add_to_position(self.get_next_available_melee_spot(), shaman)
+            if not shaman.position_set:
+                self.add_to_position(self.get_next_available_melee_spot(), shaman)
         for shaman in self.roster.get_elemental_shamans():
-            self.add_to_position(self.get_next_available_ranged_spot(), shaman)
+            if not shaman.position_set:
+                self.add_to_position(self.get_next_available_ranged_spot(), shaman)
         for healer in self.roster.get_healers():
-            self.add_to_position(self.get_next_healer_spot(), healer)
+            if not healer.position_set:
+                self.add_to_position(self.get_next_healer_spot(), healer)
+        for dk in self.roster.get_dks():
+            if not dk.position_set:
+                if self.cross < 3:
+                    self.add_to_position(self.cross, dk)
+                else:
+                    self.add_to_position(self.get_next_available_melee_spot(), dk)
+        for raider in self.roster.get_melee():
+            if not raider.position_set:
+                self.add_to_position(self.get_next_available_melee_spot(), raider)
+        for raider in self.roster.get_ranged():
+            if not raider.position_set:
+                self.add_to_position(self.get_next_available_ranged_spot(), raider)
+        for raider in self.roster:
+            if not raider.position_set:
+                self.add_to_position(self.get_next_available_melee_spot(), raider)
 
 
 class RaidRoster(BaseModel):
     raiders: list[Raider]
+
+    def __iter__(self):
+        return self.raiders.__iter__()
 
     def add_raider(self, raider: Raider) -> None:
         self.raiders.append(raider)
@@ -185,19 +261,34 @@ class RaidRoster(BaseModel):
             raise Exception('youre fucked  why arnet you running a meta tank')
         return main_tank
 
-    def get_enhancement_shamans(self) -> generator[Raider]:
+    def get_enhancement_shamans(self) -> Generator[Raider]:
         for raider in self.raiders:
             if raider.spec == 'Enhancement':
                 yield raider
 
-    def get_elemental_shamans(self) -> generator[Raider]:
+    def get_elemental_shamans(self) -> Generator[Raider]:
         for raider in self.raiders:
             if raider.spec == 'Elemental':
                 yield raider
 
-    def get_healers(self) -> generator[Raider]:
+    def get_dks(self) -> Generator[Raider]:
+        for raider in self.raiders:
+            if raider.wow_class == 'Death Knight':
+                yield raider
+
+    def get_healers(self) -> Generator[Raider]:
         for raider in self.raiders:
             if raider.role == Role.HEALER.value:
+                yield raider
+
+    def get_melee(self) -> Generator[Raider]:
+        for raider in self.raiders:
+            if raider.role == Role.MELEE_DPS.value:
+                yield raider
+
+    def get_ranged(self) -> Generator[Raider]:
+        for raider in self.raiders:
+            if raider.role == Role.RANGED_DPS.value:
                 yield raider
 
 
@@ -232,27 +323,44 @@ def get_range(sheet_id: str, cell_range: str) -> list[list[any]]:
     return result.get("values")
 
 
-def main():
-    # values = get_range(SHEET_ID, ROSTER_RANGE)
-    #
-    # roster = RaidRoster(raiders=[])
-    # for row in values:
-    #     roster.add_raider(Raider(
-    #         party=row[0],
-    #         slot=row[1],
-    #         name=row[2],
-    #         discord_id=row[3] if row[3] else 4,
-    #         wow_class=row[4],
-    #         spec=row[5],
-    #         role=Role(row[6]),
-    #     ))
-    #
-    # print(roster.has_blood_dk())
-    # with open('raids.json', 'w') as file:
-    #     file.write(roster.model_dump_json())
+def write_range(sheet_id: str, cell_range: str, cells = list[list[any]]) -> None:
+    creds = get_credentials()
+    service = build("sheets", "v4", credentials=creds)
+    sheet = service.spreadsheets()
+    sheet.values().update(
+        spreadsheetId=sheet_id,
+        range=cell_range,
+        valueInputOption='RAW',
+        body={'majorDimension': 'ROWS', 'values': cells},
+    ).execute()
 
-    alakir = AlAkir()
-    print(alakir.get_assignments())
+
+def format_cells(sheet_id: str, cell_range: str, cells: list[list[str]]) -> None:
+    pass
+
+def main():
+    values = get_range(SHEET_ID, ROSTER_RANGE)
+
+    roster = RaidRoster(raiders=[])
+    for row in values:
+        roster.add_raider(Raider(
+            party=row[0],
+            slot=row[1],
+            name=row[2],
+            discord_id=row[3] if row[3] else 4,
+            wow_class=row[4],
+            spec=row[5],
+            role=Role(row[6]),
+            color=row[7],
+        ))
+
+    with open('raids.json', 'w') as file:
+        file.write(roster.model_dump_json())
+
+    alakir = AlAkir(roster=roster)
+    alakir.fully_optimize()
+    alakir.write()
+
 
 if __name__ == "__main__":
     main()
