@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
+
 from pydantic import BaseModel
 
 from assignments.core import Assignment
-from google_sheets import SHEET_ID, get_range, write_range
+from google_sheets import SHEET_ID, format_cells, get_range, write_range
 from roster import RaidRoster, Raider
 
 
@@ -18,16 +21,40 @@ class AlAkir(BaseModel):
     diamond: Assignment = Assignment()
     circle: Assignment = Assignment()
     _cells: list[list[str]] | None = None
+    flex_healers: int = 0
 
     class Config:
         arbitrary_types_allowed = True
+
+    def model_post_init(self, __context):
+        if not os.path.exists('saved_responses.json'):
+            print('do you want to flex healers for Al\'Akir? (y/n)')
+            user_input = input()
+            if user_input == 'y':
+                print('how many healers do you want to flex?')
+                user_input = input()
+                flex_healers = int(user_input)
+            else:
+                flex_healers = 0
+            with open('saved_responses.json', 'w') as file:
+                file.write(json.dumps({'alakir': {'flex_healers': flex_healers}}))
+        with open('saved_responses.json') as file:
+            config = json.loads(file.read())
+        self.flex_healers = config['alakir']['flex_healers']
+
+    def assignments(self):
+        for assignment in [self.skull, self.cross, self.square, self.moon, self.triangle, self.star, self.diamond, self.circle]:
+            yield assignment
+
+    def assignment_cells(self):
+        for cell in [self.skull_cell, self.cross_cell, self.square_cell, self.moon_cell, self.triangle_cell, self.star_cell, self.diamond_cell, self.circle]:
+            yield cell
 
     def add_to_position(self, position: str | Assignment, raider: str | Raider) -> None:
         if isinstance(raider, str):
             raider = self.roster.get_raider_by_name(raider)
         if isinstance(position, str):
             position = getattr(self, position)
-
         if not raider:
             return
 
@@ -124,14 +151,14 @@ class AlAkir(BaseModel):
         return self.get_next_available_melee_spot()
 
     def get_next_healer_spot(self) -> Assignment:
-        if self.skull < 3 and not self.skull.has_healer(): return self.skull
-        if self.diamond < 3 and not self.diamond.has_healer(): return self.diamond
-        if self.moon < 3 and not self.moon.has_healer(): return self.moon
-        if self.triangle < 3 and not self.triangle.has_healer(): return self.triangle
-        if self.star < 3 and not self.star.has_healer(): return self.star
-        if self.square < 3 and not self.square.has_healer(): return self.square
-        if self.circle < 3 and not self.circle.has_healer(): return self.circle
-        if self.cross < 3 and not self.cross.has_healer(): return self.cross
+        if self.skull < 3 and not self.skull.has_healer(flex=self.flex_healers): return self.skull
+        if self.diamond < 3 and not self.diamond.has_healer(flex=self.flex_healers): return self.diamond
+        if self.moon < 3 and not self.moon.has_healer(flex=self.flex_healers): return self.moon
+        if self.triangle < 3 and not self.triangle.has_healer(flex=self.flex_healers): return self.triangle
+        if self.star < 3 and not self.star.has_healer(flex=self.flex_healers): return self.star
+        if self.square < 3 and not self.square.has_healer(flex=self.flex_healers): return self.square
+        if self.circle < 3 and not self.circle.has_healer(flex=self.flex_healers): return self.circle
+        if self.cross < 3 and not self.cross.has_healer(flex=self.flex_healers): return self.cross
 
     def get_any_spot(self) -> Assignment:
         # TODO: This
@@ -149,9 +176,11 @@ class AlAkir(BaseModel):
             if not shaman.position_set:
                 self.add_to_position(self.get_next_available_melee_spot(), shaman)
         for shaman in self.roster.get_elemental_shamans():
+            if shaman.flex_healer is not None and shaman.flex_healer < self.flex_healers:
+                continue
             if not shaman.position_set:
                 self.add_to_position(self.get_next_available_ranged_spot(), shaman)
-        for healer in self.roster.get_healers():
+        for healer in self.roster.get_healers(flex=self.flex_healers):
             if not healer.position_set:
                 self.add_to_position(self.get_next_healer_spot(), healer)
         for dk in self.roster.get_dks():

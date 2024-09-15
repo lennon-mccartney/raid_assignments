@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import os
 from enum import Enum
 from typing import Generator, Iterator
 
 import requests
+from PIL import ImageColor
 from pydantic import BaseModel
+
+from google_sheets import SHEET_ID, format_cells
 
 
 class Role(Enum):
@@ -30,9 +34,24 @@ class WowClass(Enum):
 class RaidRoster(BaseModel):
     raiders: list[Raider]
 
+    def model_post_init(self, __context):
+        print('do you have flex healers? (y/n)')
+        user_input = input()
+        if user_input == 'y':
+            potential_healers = [x for x in self.get_potential_flex_healers()]
+            print('which raiders are flex healers? (csv, ex. 1,3,5). Order by who will flex first.')
+            for i, healer in enumerate(potential_healers):
+                print(i, healer.name)
+            user_input = input()
+            for i, idx in enumerate(user_input.split(',')):
+                raider: Raider = potential_healers[int(idx)]
+                raider.flex_healer = i
+
     @classmethod
     def from_raid_plan(cls, raid_id: int) -> RaidRoster:
         response = requests.get(f'https://raid-helper.dev/api/raidplan/{raid_id}')
+        if response.status_code != 200:
+            raise Exception(response.content)
         return cls(raiders=[Raider.from_raid_plan_data(x) for x in response.json()['raidDrop'] if x['name'] is not None])
 
     def __iter__(self) -> Iterator[Raider]:
@@ -47,20 +66,20 @@ class RaidRoster(BaseModel):
     def get_tanks(self) -> list[Raider]:
         tanks = []
         for raider in self.raiders:
-            if raider.role == Role.TANKS.value:
+            if raider.role == Role.TANKS:
                 tanks.append(raider)
         return tanks
 
     def get_main_tank(self) -> Raider:
         if getattr(self, 'main_tank', None):
             return self.main_tank
-        main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.DEATH_KNIGHT), None)
+        main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.DEATH_KNIGHT.value), None)
         if not main_tank:
-            main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.PALADIN), None)
+            main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.PALADIN.value), None)
         if not main_tank:
-            main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.WARRIOR), None)
+            main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.WARRIOR.value), None)
         if not main_tank:
-            main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.DRUID), None)
+            main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.DRUID.value), None)
         if not main_tank:
             raise Exception('Roster has no tanks')
         return main_tank
@@ -77,12 +96,24 @@ class RaidRoster(BaseModel):
 
     def get_dks(self) -> Generator[Raider]:
         for raider in self.raiders:
-            if raider.wow_class == WowClass.DEATH_KNIGHT:
+            if raider.wow_class == WowClass.DEATH_KNIGHT.value:
                 yield raider
 
-    def get_healers(self) -> Generator[Raider]:
+    def get_rogues(self) -> Generator[Raider]:
+        for raider in self.raiders:
+            if raider.wow_class == WowClass.ROGUE.value:
+                yield raider
+
+    def get_warlocks(self) -> Generator[Raider]:
+        for raider in self.raiders:
+            if raider.wow_class == WowClass.WARLOCK.value:
+                yield raider
+
+    def get_healers(self, flex=0) -> Generator[Raider]:
         for raider in self.raiders:
             if raider.role == Role.HEALERS:
+                yield raider
+            elif raider.flex_healer is not None and raider.flex_healer < flex:
                 yield raider
 
     def get_melee(self) -> Generator[Raider]:
@@ -95,17 +126,63 @@ class RaidRoster(BaseModel):
             if raider.role == Role.RANGED:
                 yield raider
 
+    def get_potential_flex_healers(self):
+        for raider in self.get_melee():
+            if raider.wow_class in [WowClass.PALADIN.value, WowClass.SHAMAN.value, WowClass.DRUID.value]:
+                yield raider
+        for raider in self.get_ranged():
+            if raider.wow_class in [WowClass.SHAMAN.value, WowClass.PRIEST.value, WowClass.DRUID.value]:
+                yield raider
+
+    def conditional_format(self):
+        data = {'requests': []}
+        for i, raider in enumerate(self.raiders):
+            red, green, blue = (x/255 for x in ImageColor.getrgb(raider.color))
+            data['requests'].extend([
+                {
+                    'addConditionalFormatRule': {
+                        'rule': {
+                            'ranges': [
+                                {
+                                    'sheetId': x,
+                                    'startRowIndex': 0,
+                                    'endRowIndex': 300,
+                                    'startColumnIndex': 0,
+                                    'endColumnIndex': 200,
+                                }
+                            ],
+                            'booleanRule': {
+                                'condition': {
+                                    'type': 'TEXT_EQ',
+                                    'values': [{'userEnteredValue': raider.name}]
+                                },
+                                'format': {
+                                    'backgroundColor': {
+                                        'green': green,
+                                        'red': red,
+                                        'blue': blue,
+                                    }
+                                }
+                            }
+                        },
+                        'index': i,
+                    }
+                }
+            ] for x in ['1211611579', '278294734', '44485663'])
+        format_cells(SHEET_ID, data)
+
 
 class Raider(BaseModel):
     party: int
     slot: int
     name: str
-    discord_id: int
+    discord_id: int | None
     wow_class: str
     spec: str
     role: Role
     color: str
     position_set: bool = False
+    flex_healer: int | None = None
 
     @classmethod
     def from_raid_plan_data(cls, data: dict) -> Raider:
@@ -114,7 +191,7 @@ class Raider(BaseModel):
             party=data['partyId'],
             slot=data['slotId'],
             name=data['name'],
-            discord_id=data['userid'],
+            discord_id=data['userid'] if data['userid'] != 'undefined' else None,
             wow_class=wow_class,
             spec=spec,
             role=role,
@@ -257,7 +334,7 @@ def get_spec_info(spec: str) -> (Role, WowClass, str):
             role = Role.RANGED
             wow_class = WowClass.SHAMAN
             spec = 'Elemental'
-        case 'Restoration':
+        case 'Restoration1':
             role = Role.HEALERS
             wow_class = WowClass.SHAMAN
             spec = 'Restoration'

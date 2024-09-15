@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from assignments.tier_11.alakir import AlAkir
+from assignments.tier_11.run import run
 from google_sheets import ROSTER_RANGE, SHEET_ID, get_range
 from roster import RaidRoster, Raider, Role
 
@@ -30,5 +31,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run(1283260754786517025)
+    # main()
     # print(response.json())
