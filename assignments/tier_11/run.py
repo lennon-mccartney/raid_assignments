@@ -12,8 +12,8 @@ def run(raid_id: int):
     roster = RaidRoster.from_raid_plan(raid_id)
     clear_format(SHEET_ID)
     roster.conditional_format()
-    # for Boss in [AlAkir, Chimaeron]:
-    for Boss in [Conclave]:
+    for Boss in [AlAkir, Chimaeron, Conclave]:
+    # for Boss in [Conclave]:
         boss = Boss(roster=deepcopy(roster))
         boss.get_assignments()
         boss.optimize()

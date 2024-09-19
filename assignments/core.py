@@ -38,4 +38,4 @@ class Assignment(list[Raider]):
         return False
 
     def healer_count(self, flex=0) -> int:
-        return len([x for x in self if x.role == Role.HEALERS or x.flex_healer is not None and x.flex_healer < flex])
+        return len([x for x in self if x is not None and (x.role == Role.HEALERS or x.flex_healer is not None and x.flex_healer < flex)])

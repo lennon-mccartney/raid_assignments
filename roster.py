@@ -52,6 +52,7 @@ class RaidRoster(BaseModel):
         response = requests.get(f'https://raid-helper.dev/api/raidplan/{raid_id}')
         if response.status_code != 200:
             raise Exception(response.content)
+        print(response.json())
         return cls(raiders=[Raider.from_raid_plan_data(x) for x in response.json()['raidDrop'] if x['name'] is not None])
 
     def __iter__(self) -> Iterator[Raider]:
@@ -187,6 +188,7 @@ class Raider(BaseModel):
     @classmethod
     def from_raid_plan_data(cls, data: dict) -> Raider:
         role, wow_class, spec = get_spec_info(data['spec'])
+        print(data)
         return cls(
             party=data['partyId'],
             slot=data['slotId'],
