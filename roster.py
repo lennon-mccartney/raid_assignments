@@ -6,9 +6,13 @@ from typing import Generator, Iterator
 
 import requests
 from PIL import ImageColor
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from google_sheets import SHEET_ID, format_cells
+
+
+class RaiderUnavailable(BaseException):
+    pass
 
 
 class Role(Enum):
@@ -58,6 +62,35 @@ class RaidRoster(BaseModel):
     def __iter__(self) -> Iterator[Raider]:
         return self.raiders.__iter__()
 
+    def get_healers(self, flex=0) -> Generator[Raider]:
+        for raider in self.raiders:
+            if raider.role == Role.HEALERS:
+                yield raider
+            elif raider.flex_healer is not None and raider.flex_healer < flex:
+                yield raider
+
+    def get_healer(self, preferred: list[str] | None = None, last: list[str] | None = None, flex: int = 0, available: bool = True) -> Raider:
+        if preferred:
+            for raider in self.get_healers(flex=flex):
+                if raider.class_and_spec in preferred:
+                    if available and raider.position_set:
+                        continue
+                    return raider
+        if last:
+            for raider in self.get_healers(flex=flex):
+                if raider.class_and_spec not in last:
+                    if available and raider.position_set:
+                        continue
+                    return raider
+        for raider in self.get_healers(flex=flex):
+            if available and raider.position_set:
+                continue
+            return raider
+        raise RaiderUnavailable()
+
+    def get_tank_healer(self):
+        return self.get_healer(preferred=['restoration shaman', 'holy paladin'], last=['restoration druid', 'discipline priest'])
+
     def add_raider(self, raider: Raider) -> None:
         self.raiders.append(raider)
 
@@ -70,6 +103,24 @@ class RaidRoster(BaseModel):
             if raider.role == Role.TANKS:
                 tanks.append(raider)
         return tanks
+
+    def get_available_resto_shaman(self):
+        for raider in self.get_healers():
+            if raider.wow == WowClass.SHAMAN.value and not raider.position_set:
+                return raider
+        raise RaiderUnavailable()
+
+    def get_available_holy_paladin(self):
+        for raider in self.get_healers():
+            if raider.wow == WowClass.PALADIN.value and not raider.position_set:
+                return raider
+        raise RaiderUnavailable()
+
+    def get_available_healer(self):
+        for raider in self.get_healers():
+            if not raider.position_set:
+                return raider
+        raise RaiderUnavailable()
 
     def get_main_tank(self) -> Raider:
         if getattr(self, 'main_tank', None):
@@ -85,14 +136,21 @@ class RaidRoster(BaseModel):
             raise Exception('Roster has no tanks')
         return main_tank
 
+    def get_off_tank(self):
+        main_tank = self.get_main_tank()
+        for raider in self.get_tanks():
+            if raider != main_tank and not raider.position_set:
+                return raider
+        raise RaiderUnavailable()
+
     def get_enhancement_shamans(self) -> Generator[Raider]:
         for raider in self.raiders:
-            if raider.spec == 'Enhancement':
+            if raider.spec == 'enhancement':
                 yield raider
 
     def get_elemental_shamans(self) -> Generator[Raider]:
         for raider in self.raiders:
-            if raider.spec == 'Elemental':
+            if raider.spec == 'elemental':
                 yield raider
 
     def get_dks(self) -> Generator[Raider]:
@@ -108,13 +166,6 @@ class RaidRoster(BaseModel):
     def get_warlocks(self) -> Generator[Raider]:
         for raider in self.raiders:
             if raider.wow_class == WowClass.WARLOCK.value:
-                yield raider
-
-    def get_healers(self, flex=0) -> Generator[Raider]:
-        for raider in self.raiders:
-            if raider.role == Role.HEALERS:
-                yield raider
-            elif raider.flex_healer is not None and raider.flex_healer < flex:
                 yield raider
 
     def get_melee(self) -> Generator[Raider]:
@@ -185,6 +236,11 @@ class Raider(BaseModel):
     position_set: bool = False
     flex_healer: int | None = None
 
+    @computed_field
+    def class_and_spec(self):
+        return f'{self.spec} {self.wow_class}'
+
+
     @classmethod
     def from_raid_plan_data(cls, data: dict) -> Raider:
         role, wow_class, spec = get_spec_info(data['spec'])
@@ -211,142 +267,142 @@ def get_spec_info(spec: str) -> (Role, WowClass, str):
         case 'Protection':
             role = Role.TANKS
             wow_class = WowClass.WARRIOR
-            spec = 'Protection'
+            spec = 'protection'
         case 'Protection1':
             role = Role.TANKS
             wow_class = WowClass.PALADIN
-            spec = 'Protection'
+            spec = 'protection'
         case 'Guardian':
             role = Role.TANKS
             wow_class = WowClass.DRUID
-            spec = 'Guardian'
+            spec = 'guardian'
         case 'Blood_Tank':
             role = Role.TANKS
             wow_class = WowClass.DEATH_KNIGHT
-            spec = 'Blood'
+            spec = 'blood'
         case 'Frost_Tank':
             role = Role.TANKS
             wow_class = WowClass.DEATH_KNIGHT
-            spec = 'Frost'
+            spec = 'frost'
         case 'Unholy_Tank':
             role = Role.TANKS
             wow_class = WowClass.DEATH_KNIGHT
-            spec = 'Unholy'
+            spec = 'unholy'
         case 'Blood_DPS':
             role = Role.MELEE
             wow_class = WowClass.DEATH_KNIGHT
-            spec = 'Blood'
+            spec = 'blood'
         case 'Frost_DPS':
             role = Role.MELEE
             wow_class = WowClass.DEATH_KNIGHT
-            spec = 'Frost'
+            spec = 'frost'
         case 'Unholy_DPS':
             role = Role.MELEE
             wow_class = WowClass.DEATH_KNIGHT
-            spec = 'Unholy'
+            spec = 'unholy'
         case 'Arms':
             role = Role.MELEE
             wow_class = WowClass.WARRIOR
-            spec = 'Arms'
+            spec = 'arms'
         case 'Fury':
             role = Role.MELEE
             wow_class = WowClass.WARRIOR
-            spec = 'Fury'
+            spec = 'fury'
         case 'Balance':
             role = Role.RANGED
             wow_class = WowClass.DRUID
-            spec = 'Balance'
+            spec = 'balance'
         case 'Feral':
             role = Role.MELEE
             wow_class = WowClass.DRUID
-            spec = 'Feral'
+            spec = 'feral'
         case 'Restoration':
             role = Role.HEALERS
             wow_class = WowClass.DRUID
-            spec = 'Restoration'
+            spec = 'restoration'
         case 'Holy1':
             role = Role.HEALERS
             wow_class = WowClass.PALADIN
-            spec = 'Restoration'
+            spec = 'restoration'
         case 'Retribution':
             role = Role.MELEE
             wow_class = WowClass.PALADIN
-            spec = 'Retribution'
+            spec = 'retribution'
         case 'Assassination':
             role = Role.MELEE
             wow_class = WowClass.ROGUE
-            spec = 'Assassination'
+            spec = 'assassination'
         case 'Combat':
             role = Role.MELEE
             wow_class = WowClass.ROGUE
-            spec = 'Combat'
+            spec = 'combat'
         case 'Subtlety':
             role = Role.MELEE
             wow_class = WowClass.ROGUE
-            spec = 'Subtlety'
+            spec = 'subtlety'
         case 'Beastmastery':
             role = Role.RANGED
             wow_class = WowClass.HUNTER
-            spec = 'Beast Mastery'
+            spec = 'beast mastery'
         case 'Marksmanship':
             role = Role.RANGED
             wow_class = WowClass.HUNTER
-            spec = 'Marksmanship'
+            spec = 'marksmanship'
         case 'Survival':
             role = Role.RANGED
             wow_class = WowClass.HUNTER
-            spec = 'Survival'
+            spec = 'survival'
         case 'Frost':
             role = Role.RANGED
             wow_class = WowClass.MAGE
-            spec = 'Frost'
+            spec = 'frost'
         case 'Fire':
             role = Role.RANGED
             wow_class = WowClass.MAGE
-            spec = 'Fire'
+            spec = 'fire'
         case 'Arcane':
             role = Role.RANGED
             wow_class = WowClass.MAGE
-            spec = 'Arcane'
+            spec = 'arcane'
         case 'Affliction':
             role = Role.RANGED
             wow_class = WowClass.WARLOCK
-            spec = 'Affliction'
+            spec = 'affliction'
         case 'Demonology':
             role = Role.RANGED
             wow_class = WowClass.WARLOCK
-            spec = 'Demonology'
+            spec = 'demonology'
         case 'Destruction':
             role = Role.RANGED
             wow_class = WowClass.WARLOCK
-            spec = 'Destruction'
+            spec = 'destruction'
         case 'Discipline':
             role = Role.HEALERS
             wow_class = WowClass.PRIEST
-            spec = 'Discipline'
+            spec = 'discipline'
         case 'Holy':
             role = Role.HEALERS
             wow_class = WowClass.PRIEST
-            spec = 'Holy'
+            spec = 'holy'
         case 'Shadow':
             role = Role.RANGED
             wow_class = WowClass.PRIEST
-            spec = 'Shadow'
+            spec = 'shadow'
         case 'Elemental':
             role = Role.RANGED
             wow_class = WowClass.SHAMAN
-            spec = 'Elemental'
+            spec = 'elemental'
         case 'Restoration1':
             role = Role.HEALERS
             wow_class = WowClass.SHAMAN
-            spec = 'Restoration'
+            spec = 'restoration'
         case 'Enhancement':
             role = Role.MELEE
             wow_class = WowClass.SHAMAN
-            spec = 'Enhancement'
+            spec = 'enhancement'
         case _:
             print(f'WE DID NOT FIND INFO FOR THIS ROLE {spec}')
             role = Role.TANKS
             wow_class = WowClass.PRIEST
-            spec = 'Unknown'
+            spec = 'unknown'
     return role, wow_class, spec
