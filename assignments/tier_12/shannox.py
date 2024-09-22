@@ -21,14 +21,13 @@ class Shannox(BaseModel):
         self.assign_riplimb_tank()
         self.assign_riplimb_healer()
 
-
     def write(self):
         pass
 
     def assign_shannox_tank(self):
         if self.shannox_tank:
             return
-        self.shannox_tank = self.roster.get_main_tank()
+        self.shannox_tank = self.roster.get_tank(main_tank=True)
 
     def assign_shannox_healer(self):
         if self.shannox_healer:
@@ -38,7 +37,7 @@ class Shannox(BaseModel):
     def assign_riplimb_tank(self):
         if self.riplimb_tank:
             return
-        self.riplimb_tank = self.roster.get_off_tank()
+        self.riplimb_tank = self.roster.get_tank()
 
     def assign_riplimb_healer(self):
         if self.riplimb_healer:

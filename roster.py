@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from enum import Enum
 from typing import Generator, Iterator
 
@@ -38,6 +37,9 @@ class WowClass(Enum):
 class RaidRoster(BaseModel):
     raiders: list[Raider]
 
+    def __iter__(self) -> Iterator[Raider]:
+        return self.raiders.__iter__()
+
     def model_post_init(self, __context):
         print('do you have flex healers? (y/n)')
         user_input = input()
@@ -50,6 +52,8 @@ class RaidRoster(BaseModel):
             for i, idx in enumerate(user_input.split(',')):
                 raider: Raider = potential_healers[int(idx)]
                 raider.flex_healer = i
+                print(f'what is {raider.name}\'s flex spec?')
+                raider.flex_spec = input()
 
     @classmethod
     def from_raid_plan(cls, raid_id: int) -> RaidRoster:
@@ -59,10 +63,10 @@ class RaidRoster(BaseModel):
         print(response.json())
         return cls(raiders=[Raider.from_raid_plan_data(x) for x in response.json()['raidDrop'] if x['name'] is not None])
 
-    def __iter__(self) -> Iterator[Raider]:
-        return self.raiders.__iter__()
+    def add_raider(self, raider: Raider) -> None:
+        self.raiders.append(raider)
 
-    def get_healers(self, flex=0) -> Generator[Raider]:
+    def get_healers(self, flex: int = 0) -> Generator[Raider]:
         for raider in self.raiders:
             if raider.role == Role.HEALERS:
                 yield raider
@@ -91,57 +95,90 @@ class RaidRoster(BaseModel):
     def get_tank_healer(self):
         return self.get_healer(preferred=['restoration shaman', 'holy paladin'], last=['restoration druid', 'discipline priest'])
 
-    def add_raider(self, raider: Raider) -> None:
-        self.raiders.append(raider)
-
     def get_raider_by_name(self, name: str) -> Raider:
         return next((x for x in self.raiders if x.name == name), None)
 
-    def get_tanks(self) -> list[Raider]:
-        tanks = []
+    def get_tanks(self, flex: int = 0) -> Generator[Raider]:
         for raider in self.raiders:
             if raider.role == Role.TANKS:
-                tanks.append(raider)
-        return tanks
+                yield raider
 
-    def get_available_resto_shaman(self):
-        for raider in self.get_healers():
-            if raider.wow == WowClass.SHAMAN.value and not raider.position_set:
-                return raider
+    def get_tank(self, preferred: list[str] | None = None, last: list[str] | None = None, flex: int = 0, available: bool = True, main_tank: bool = False) -> Raider:
+        if main_tank:
+            for raider in self.get_tanks(flex=flex):
+                if raider.main_tank:
+                    return raider
+            raider = self.get_tank(preferred=['blood death knight'], last=['guardian druid'])
+            raider.main_tank = True
+            return raider
+        if preferred:
+            for raider in self.get_tanks(flex=flex):
+                if raider.class_and_spec in preferred:
+                    if raider.main_tank or available and raider.position_set:
+                        continue
+                    return raider
+        if last:
+            for raider in self.get_tanks(flex=flex):
+                if raider.class_and_spec not in last:
+                    if raider.main_tank or available and raider.position_set:
+                        continue
+                    return raider
+        for raider in self.get_tanks(flex=flex):
+            if raider.main_tank or available and raider.position_set:
+                continue
+            return raider
         raise RaiderUnavailable()
 
-    def get_available_holy_paladin(self):
-        for raider in self.get_healers():
-            if raider.wow == WowClass.PALADIN.value and not raider.position_set:
-                return raider
-        raise RaiderUnavailable()
+    def get_raider(self, role: Role = None, preferred: list[str] = None, last: list[str] = None, available: bool = True, strict: bool = False ) -> Raider:
+        if preferred:
+            for raider in self.raiders:
+                if role and raider.role != role:
+                    continue
+                if preferred and raider.class_and_spec in preferred:
+                    if available and raider.position_set:
+                        continue
+                    return raider
+            if strict:
+                raise RaiderUnavailable()
+        if last:
+            for raider in self.raiders:
+                if role and raider.role != role:
+                    continue
+                if raider.class_and_spec not in last:
+                    if available and raider.position_set:
+                        continue
+                    return raider
+        for raider in self.raiders:
+            if role and raider.role != role:
+                continue
+            if available and raider.position_set:
+                continue
+            return raider
 
-    def get_available_healer(self):
-        for raider in self.get_healers():
-            if not raider.position_set:
-                return raider
-        raise RaiderUnavailable()
-
-    def get_main_tank(self) -> Raider:
-        if getattr(self, 'main_tank', None):
-            return self.main_tank
-        main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.DEATH_KNIGHT.value), None)
-        if not main_tank:
-            main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.PALADIN.value), None)
-        if not main_tank:
-            main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.WARRIOR.value), None)
-        if not main_tank:
-            main_tank = next((x for x in self.raiders if x.role == Role.TANKS and x.wow_class == WowClass.DRUID.value), None)
-        if not main_tank:
-            raise Exception('Roster has no tanks')
-        return main_tank
-
-    def get_off_tank(self):
-        main_tank = self.get_main_tank()
-        for raider in self.get_tanks():
-            if raider != main_tank and not raider.position_set:
-                return raider
-        raise RaiderUnavailable()
+    def get_raiders(self, role: Role = None, preferred: list[str] = None, last: list[str] = None, available: bool = True, strict: bool = False ) -> Generator[Raider]:
+        if preferred:
+            for raider in self.raiders:
+                if role and raider.role != role:
+                    continue
+                if preferred and raider.class_and_spec in preferred:
+                    if available and raider.position_set:
+                        continue
+                    yield raider
+        if not strict:
+            if last:
+                for raider in self.raiders:
+                    if role and raider.role != role:
+                        continue
+                    if raider.class_and_spec not in last:
+                        if available and raider.position_set:
+                            continue
+                        yield raider
+            for raider in self.raiders:
+                if role and raider.role != role:
+                    continue
+                if available and raider.position_set:
+                    continue
+                yield raider
 
     def get_enhancement_shamans(self) -> Generator[Raider]:
         for raider in self.raiders:
@@ -153,10 +190,16 @@ class RaidRoster(BaseModel):
             if raider.spec == 'elemental':
                 yield raider
 
-    def get_dks(self) -> Generator[Raider]:
+    def get_death_knights(self) -> Generator[Raider]:
         for raider in self.raiders:
             if raider.wow_class == WowClass.DEATH_KNIGHT.value:
                 yield raider
+
+    def get_death_knight(self, role: Role = None, preferred: list[str] = None) -> Raider:
+        for raider in self.get_death_knights():
+            if raider.role == role:
+                return raider
+        raise RaiderUnavailable()
 
     def get_rogues(self) -> Generator[Raider]:
         for raider in self.raiders:
@@ -235,11 +278,12 @@ class Raider(BaseModel):
     color: str
     position_set: bool = False
     flex_healer: int | None = None
+    flex_spec: str | None = None
+    main_tank: bool = False
 
     @computed_field
     def class_and_spec(self):
         return f'{self.spec} {self.wow_class}'
-
 
     @classmethod
     def from_raid_plan_data(cls, data: dict) -> Raider:

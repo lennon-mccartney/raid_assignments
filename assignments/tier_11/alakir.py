@@ -183,7 +183,7 @@ class AlAkir(BaseModel):
         for healer in self.roster.get_healers(flex=self.flex_healers):
             if not healer.position_set:
                 self.add_to_position(self.get_next_healer_spot(), healer)
-        for dk in self.roster.get_dks():
+        for dk in self.roster.get_death_knights():
             if not dk.position_set:
                 if self.cross < 3:
                     self.add_to_position(self.cross, dk)
