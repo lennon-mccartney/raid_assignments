@@ -34,7 +34,7 @@ class Conclave(BaseModel):
                 nezir.position_set = True
 
     def optimize(self):
-        tank = self.roster.get_main_tank()
+        tank = self.roster.get_tank(main_tank=True)
         if not tank.position_set:
             self.nezir.append(tank)
             tank.position_set = True

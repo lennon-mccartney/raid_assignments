@@ -169,9 +169,9 @@ class AlAkir(BaseModel):
         self.optimize()
 
     def optimize(self) -> None:
-        main_tank = self.roster.get_main_tank()
+        main_tank = self.roster.get_tank(main_tank=True)
         if not main_tank.position_set:
-            self.add_to_position('circle', self.roster.get_main_tank())
+            self.add_to_position('circle', self.roster.get_tank(main_tank=True))
         for shaman in self.roster.get_enhancement_shamans():
             if not shaman.position_set:
                 self.add_to_position(self.get_next_available_melee_spot(), shaman)

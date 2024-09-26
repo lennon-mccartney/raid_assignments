@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from typing import Generator, Iterator
 
@@ -8,6 +9,8 @@ from PIL import ImageColor
 from pydantic import BaseModel, computed_field
 
 from google_sheets import SHEET_ID, format_cells
+
+LOGGER = logging.getLogger(__name__)
 
 
 class RaiderUnavailable(BaseException):
@@ -24,7 +27,7 @@ class Role(Enum):
 class WowClass(Enum):
     MAGE = 'mage'
     HUNTER = 'hunter'
-    DEATH_KNIGHT = 'death_knight'
+    DEATH_KNIGHT = 'death knight'
     DRUID = 'druid'
     PALADIN = 'paladin'
     PRIEST = 'priest'
@@ -54,13 +57,13 @@ class RaidRoster(BaseModel):
                 raider.flex_healer = i
                 print(f'what is {raider.name}\'s flex spec?')
                 raider.flex_spec = input()
+        self.set_main_tank()
 
     @classmethod
     def from_raid_plan(cls, raid_id: int) -> RaidRoster:
         response = requests.get(f'https://raid-helper.dev/api/raidplan/{raid_id}')
         if response.status_code != 200:
             raise Exception(response.content)
-        print(response.json())
         return cls(raiders=[Raider.from_raid_plan_data(x) for x in response.json()['raidDrop'] if x['name'] is not None])
 
     def add_raider(self, raider: Raider) -> None:
@@ -103,14 +106,19 @@ class RaidRoster(BaseModel):
             if raider.role == Role.TANKS:
                 yield raider
 
+    def set_main_tank(self):
+        for raider in self.get_tanks():
+            raider.main_tank = False
+        raider = self.get_tank(preferred=['blood death knight'], last=['guardian druid'], available=False)
+        raider.main_tank = True
+
     def get_tank(self, preferred: list[str] | None = None, last: list[str] | None = None, flex: int = 0, available: bool = True, main_tank: bool = False) -> Raider:
         if main_tank:
             for raider in self.get_tanks(flex=flex):
                 if raider.main_tank:
                     return raider
-            raider = self.get_tank(preferred=['blood death knight'], last=['guardian druid'])
-            raider.main_tank = True
-            return raider
+            self.set_main_tank()
+            return self.get_tank(main_tank=True)
         if preferred:
             for raider in self.get_tanks(flex=flex):
                 if raider.class_and_spec in preferred:
@@ -282,18 +290,17 @@ class Raider(BaseModel):
     main_tank: bool = False
 
     @computed_field
-    def class_and_spec(self):
+    def class_and_spec(self) -> str:
         return f'{self.spec} {self.wow_class}'
 
     @classmethod
     def from_raid_plan_data(cls, data: dict) -> Raider:
         role, wow_class, spec = get_spec_info(data['spec'])
-        print(data)
         return cls(
             party=data['partyId'],
             slot=data['slotId'],
             name=data['name'],
-            discord_id=data['userid'] if data['userid'] != 'undefined' else None,
+            discord_id=data.get('userid'),
             wow_class=wow_class,
             spec=spec,
             role=role,
@@ -445,7 +452,7 @@ def get_spec_info(spec: str) -> (Role, WowClass, str):
             wow_class = WowClass.SHAMAN
             spec = 'enhancement'
         case _:
-            print(f'WE DID NOT FIND INFO FOR THIS ROLE {spec}')
+            LOGGER.warning(f'we did not find info for this role {spec}')
             role = Role.TANKS
             wow_class = WowClass.PRIEST
             spec = 'unknown'

@@ -98,7 +98,7 @@ class Chimaeron(BaseModel):
         raider.position_set = True
 
     def optimize(self):
-        main_tank = self.roster.get_main_tank()
+        main_tank = self.roster.get_tank(main_tank=True)
         main_tank.position_set = True
         for raider in self.roster.get_rogues():
             if not raider.position_set:
