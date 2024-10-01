@@ -237,7 +237,33 @@ class RaidRoster(BaseModel):
             if raider.wow_class in [WowClass.SHAMAN.value, WowClass.PRIEST.value, WowClass.DRUID.value]:
                 yield raider
 
-    def conditional_format(self):
+    def get_raid_cooldowns(self, can_stack: bool = True, burst: bool = True) -> Generator[tuple[Raider]]:
+        if can_stack:
+            preferred = ['restoration shaman', 'discipline priest']
+            if burst:
+                preferred.append('unholy death knight')
+            for raider in self.get_raiders(preferred=preferred, strict=True, available=False):
+                yield raider,
+        else:
+            cds = list(self.get_raiders(preferred=['restoration shaman', 'discipline priest'], strict=True, available=False))
+            if burst:
+                dk_cds = list(self.get_raiders(preferred=['unholy death knight'], strict=True, available=False))
+                for raider1, raider2 in zip(dk_cds, cds):
+                    yield raider1, raider2
+                if len(cds) > len(dk_cds):
+                    cds = cds[len(dk_cds):]
+                else:
+                    cds = []
+            icds = iter(cds)
+            try:
+                for cd1, cd2 in zip(icds):
+                    yield cd1, cd2
+            except ValueError:
+                pass
+        for raider1, raider2 in zip(self.get_raiders(preferred=['holy paladin'], strict=True), self.get_raiders(preferred=['arms warrior', 'fury warrior', 'protection warrior'], strict=True, available=False)):
+            yield raider1, raider2
+
+    def conditional_format(self, sheet_id: str, gids: list[str]) -> None:
         data = {'requests': []}
         for i, raider in enumerate(self.raiders):
             red, green, blue = (x/255 for x in ImageColor.getrgb(raider.color))
@@ -271,17 +297,19 @@ class RaidRoster(BaseModel):
                         'index': i,
                     }
                 }
-            ] for x in ['1211611579', '278294734', '44485663'])
-        format_cells(SHEET_ID, data)
+            ] for x in gids)
+            # ] for x in ['1211611579', '278294734', '44485663'])
+        format_cells(sheet_id, data)
 
 
 class Raider(BaseModel):
     party: int
     slot: int
     name: str
-    discord_id: int | None
+    discord_id: int | str | None
     wow_class: str
     spec: str
+    spec_emote: str
     role: Role
     color: str
     position_set: bool = False
@@ -296,6 +324,7 @@ class Raider(BaseModel):
     @classmethod
     def from_raid_plan_data(cls, data: dict) -> Raider:
         role, wow_class, spec = get_spec_info(data['spec'])
+        print()
         return cls(
             party=data['partyId'],
             slot=data['slotId'],
@@ -305,8 +334,12 @@ class Raider(BaseModel):
             spec=spec,
             role=role,
             color=data['color'],
+            spec_emote=data['spec_emote'],
         )
 
+    @computed_field()
+    def spec_link(self) -> str:
+        return f'https://cdn.discordapp.com/emojis/{self.spec_emote}.png'
 
 def get_raid_plan(raid_number: int) -> list[Raider]:
     response = requests.get(f'https://raid-helper.dev/api/raidplan/{raid_number}')

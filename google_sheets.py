@@ -21,8 +21,9 @@ def clear_format(sheet_id):
         if 'conditionalFormats' not in sheet_response:
             continue
         for i, cformat in enumerate(sheet_response['conditionalFormats']):
-            data['requests'].append({'deleteConditionalFormatRule': {'sheetId': cformat['ranges'][0]['sheetId'], 'index': 0}})
-    sheet.batchUpdate(spreadsheetId=sheet_id, body=data).execute()
+            data['requests'].append({'deleteConditionalFormatRule': {'sheetId': cformat['ranges'][0].get('sheetId', '0'), 'index': 0}})
+    if data['requests']:
+        sheet.batchUpdate(spreadsheetId=sheet_id, body=data).execute()
 
 
 def format_cells(sheet_id: str, data: dict) -> None:
@@ -39,7 +40,8 @@ def write_range(sheet_id: str, cell_range: str, cells=list[list[any]]) -> None:
     sheet.values().update(
         spreadsheetId=sheet_id,
         range=cell_range,
-        valueInputOption='RAW',
+        # valueInputOption='RAW',
+        valueInputOption='USER_ENTERED',
         body={'majorDimension': 'ROWS', 'values': cells},
     ).execute()
 
